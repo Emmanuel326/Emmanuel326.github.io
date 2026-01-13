@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Bounded Queue with Mutex + Condition Variables</title>
+</head>
+
+<body>
+  <h1>Bounded Queue with Mutex + Condition Variables</h1>
+
+  <p>
+    This note documents the design and reasoning behind a bounded work queue
+    implemented using <code>pthread_mutex_t</code> and
+    <code>pthread_cond_t</code>.
+  </p>
+
+  <p>
+    The goal was not to build the fastest queue possible, but to build one that
+    is <em>easy to reason about</em>, correct under contention, and explicit
+    about its guarantees and limitations.
+  </p>
+
+  <hr>
+
+  <h2>Why revisit this problem?</h2>
+
+  <p>
+    Bounded queues are a solved problem in theory, but they remain a frequent
+    source of subtle bugs in practice: missed wakeups, spurious wakeups,
+    incorrect signaling, data races, and broken invariants under load.
+  </p>
+
+  <p>
+    This implementation was written as an exercise in making the invariants
+    explicit and then verifying that the code enforces them under concurrency.
+  </p>
+
+  <hr>
+
+  <h2>Core invariants</h2>
+
+  <p>
+    The implementation is structured around a small set of invariants that must
+    hold at all times:
+  </p>
+
+  <ul>
+    <li><code>0 &lt;= size &lt;= capacity</code></li>
+    <li><code>head</code> and <code>tail</code> remain within bounds</li>
+    <li>enqueue blocks iff the queue is full</li>
+    <li>dequeue blocks iff the queue is empty</li>
+    <li>items are dequeued in FIFO order</li>
+    <li>no item is lost or duplicated</li>
+  </ul>
+
+  <p>
+    All design decisions follow directly from preserving these invariants under
+    concurrent access.
+  </p>
+
+  <hr>
+
+  <h2>Mechanism</h2>
+
+  <p>
+    A single mutex protects all shared queue state. This avoids the complexity
+    of fine-grained locking and makes it possible to reason about state
+    transitions atomically.
+  </p>
+
+  <p>
+    Two condition variables are used:
+  </p>
+
+  <ul>
+    <li><code>not_full</code> — producers wait while the queue is full</li>
+    <li><code>not_empty</code> — consumers wait while the queue is empty</li>
+  </ul>
+
+  <p>
+    All waits are performed in <code>while</code> loops rather than
+    <code>if</code> statements. This handles spurious wakeups and ensures that
+    the invariants are re-checked after every wakeup.
+  </p>
+
+  <hr>
+
+  <h2>Memory visibility</h2>
+
+  <p>
+    Correctness is not just about mutual exclusion but also about visibility.
+    The mutex and condition variable synchronization establish a happens-before
+    relationship between producers and consumers.
+  </p>
+
+  <p>
+    Any memory written by a producer before enqueue is guaranteed to be visible
+    to the consumer after dequeue.
+  </p>
+
+  <hr>
+
+  <h2>Failure modes avoided</h2>
+
+  <p>
+    This design deliberately avoids several common pitfalls:
+  </p>
+
+  <ul>
+    <li>Signaling without holding the mutex</li>
+    <li>Using <code>if</code> instead of <code>while</code> around waits</li>
+    <li>Multiple locks protecting related state</li>
+    <li>Busy waiting under contention</li>
+  </ul>
+
+  <p>
+    The result is not the lowest-latency queue, but one whose behavior remains
+    predictable under load.
+  </p>
+
+  <hr>
+
+  <h2>Testing & verification</h2>
+
+  <p>
+    The implementation was validated using:
+  </p>
+
+  <ul>
+    <li>Single-threaded functional tests</li>
+    <li>High-contention stress tests (multiple producers and consumers)</li>
+    <li>Dynamic analysis with ASan, UBSan, and TSan</li>
+  </ul>
+
+  <p>
+    The goal of testing was not to prove correctness, but to increase confidence
+    that the stated invariants hold in practice.
+  </p>
+
+  <hr>
+
+  <h2>What this is (and is not)</h2>
+
+  <p>
+    This queue is intended as a correct baseline and a reference point.
+    It is not lock-free, not wait-free, and not optimized for extreme
+    throughput.
+  </p>
+
+  <p>
+    More complex designs should be evaluated against a baseline like this one,
+    with clearly stated tradeoffs.
+  </p>
+
+  <hr>
+
+  <p>
+    <a href="https://github.com/Emmanuel326/mutex_condvar">Source code</a>
+  </p>
+</body>
+</html>
+

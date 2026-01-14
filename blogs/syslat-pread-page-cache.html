@@ -2,17 +2,39 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>Measuring pread() Latency and Page Cache Effects</title>
+  <title>How Long Does pread() Really Take?</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
 </head>
 <body>
 
-<h1>Measuring <code>pread()</code> Latency and Page Cache Effects</h1>
+<h1>How Long Does <code>pread()</code> Really Take?</h1>
 
 <p>
-This post documents a small, controlled systems experiment.
-The goal is to measure one thing, under explicit conditions,
-and understand exactly what is being observed.
+At some point, every performance investigation collapses into a deceptively
+simple question:
+</p>
+
+<blockquote>
+<p>
+“How long does <em>this</em> actually take?”
+</p>
+</blockquote>
+
+<p>
+This page documents one such question, stripped down as far as I know how
+to strip it:
+</p>
+
+<blockquote>
+<p>
+How long does a single <code>pread()</code> system call take, and what role
+does the page cache play?
+</p>
+</blockquote>
+
+<p>
+Not throughput. Not benchmarks. Not “real-world workloads”.
+Just one syscall, measured carefully.
 </p>
 
 <p>
@@ -27,96 +49,99 @@ https://github.com/Emmanuel326/syslat
 
 <hr>
 
-<h2>Motivation</h2>
+<h2>Why ask such a small question?</h2>
 
 <p>
-Performance discussions often mix syscall overhead, page faults,
-storage latency, filesystem behavior, and scheduler effects into a
-single number.
+Most performance discussions mix several effects into one number:
+syscall overhead, page faults, storage latency, filesystem behavior,
+CPU scheduling, and sometimes sheer luck.
 </p>
 
 <p>
-Once mixed, it becomes difficult to reason about cause.
+Once mixed, cause and effect become hard to separate.
 </p>
 
 <p>
-This experiment asks a deliberately narrow question:
+Rather than arguing about numbers, this experiment backs up and asks
+a deliberately narrow question under explicit conditions.
 </p>
 
-<blockquote>
 <p>
-How long does a single <code>pread()</code> system call take, and how does
-page cache state affect it?
-</p>
-</blockquote>
-
-<p>
-Not throughput. Not benchmarks. Just that.
+If we can’t reason about one syscall in isolation,
+we have no business reasoning about systems built on top of thousands of them.
 </p>
 
 <hr>
 
-<h2>What Is Being Measured</h2>
+<h2>What is actually being measured</h2>
 
 <p>
-Each measurement is the elapsed time of one <code>pread()</code> system call,
+Each data point is the elapsed time of one <code>pread()</code> call,
 measured from userspace entry to userspace return.
 </p>
 
 <p>
-Each iteration records one value in nanoseconds:
+Each iteration:
 </p>
 
 <ul>
-  <li>enter the kernel</li>
-  <li>execute <code>pread()</code></li>
-  <li>return to userspace</li>
-  <li>record elapsed time</li>
+  <li>enters the kernel</li>
+  <li>executes <code>pread()</code></li>
+  <li>returns to userspace</li>
+  <li>records elapsed time in nanoseconds</li>
 </ul>
 
 <p>
-There is no averaging, no warmup logic, and no filtering.
+There is no averaging, no warm-up phase, and no filtering.
+Every syscall stands on its own.
+</p>
+
+<p>
+The output is intentionally raw.
+Interpretation is a separate step.
 </p>
 
 <hr>
 
-<h2>Experimental Shape</h2>
+<h2>The shape of the experiment</h2>
 
-<h3>Binary</h3>
+<h3>Binary shape</h3>
 
 <ul>
   <li>Single executable</li>
   <li>Single source file</li>
   <li>Single thread</li>
-  <li>No libraries or frameworks</li>
+  <li>No frameworks, helpers, or abstractions</li>
 </ul>
 
 <p>
-If it does not fit in one file, the experiment is not understood yet.
+If the experiment does not fit in one file,
+it is not yet simple enough to trust.
 </p>
 
-<h3>Execution Model</h3>
+<h3>Execution model</h3>
 
 <ul>
   <li>One process</li>
-  <li>CPU affinity pinned externally using <code>taskset</code></li>
-  <li>No CPU migration</li>
+  <li>CPU affinity pinned externally via <code>taskset</code></li>
+  <li>No CPU migration during measurement</li>
 </ul>
 
 <p>
-CPU pinning is treated as environmental control, not program logic.
+CPU pinning is treated as environmental control,
+not part of the program itself.
 </p>
 
 <hr>
 
-<h2>Warm vs Cold Page Cache</h2>
+<h2>Cold cache vs warm cache</h2>
 
 <p>
-Warm and cold cache states are handled outside the program.
-They are initial conditions, not runtime modes.
+Page cache state is treated as an initial condition,
+not a runtime toggle.
 </p>
 
-<h3>Cold Run</h3>
+<h3>Cold runs</h3>
 
 <pre>
 sync
@@ -124,11 +149,11 @@ echo 3 | sudo tee /proc/sys/vm/drop_caches
 </pre>
 
 <p>
-This ensures the page cache is empty before execution.
-Early iterations will include page faults and real IO.
+This forces the page cache to start empty.
+Early iterations will include page faults and real I/O.
 </p>
 
-<h3>Warm Run</h3>
+<h3>Warm runs</h3>
 
 <pre>
 cat testfile &gt; /dev/null
@@ -139,7 +164,8 @@ This ensures the file is resident in the page cache before measurement.
 </p>
 
 <p>
-The binary itself does not change between runs.
+The binary itself is unchanged between runs.
+Only the initial conditions differ.
 </p>
 
 <hr>
@@ -148,35 +174,40 @@ The binary itself does not change between runs.
 
 <p>
 <code>pread()</code> avoids shared file offset state.
-Each iteration reads the same offset and follows the same syscall path.
+Each iteration reads the same offset and follows the same kernel path.
 </p>
 
 <p>
-This removes <code>lseek()</code> noise and isolates page cache behavior.
+This removes <code>lseek()</code> noise and keeps the syscall behavior
+as consistent as possible across iterations.
+</p>
+
+<p>
+The goal is not realism, but repeatability.
 </p>
 
 <hr>
 
-<h2>What This Is Not Measuring</h2>
+<h2>What this experiment is not</h2>
 
 <ul>
-  <li>Filesystem throughput</li>
-  <li>NVMe performance</li>
-  <li>Scheduler latency</li>
-  <li>Interrupt latency</li>
-  <li>Overall system performance</li>
+  <li>It is not measuring filesystem throughput</li>
+  <li>It is not benchmarking NVMe devices</li>
+  <li>It is not measuring scheduler or interrupt latency</li>
+  <li>It is not claiming to represent “application performance”</li>
 </ul>
 
 <p>
-Those are different questions and require different experiments.
+Those are all valid questions.
+They just require different experiments.
 </p>
 
 <hr>
 
-<h2>Output Philosophy</h2>
+<h2>Output, by design</h2>
 
 <p>
-The program emits raw measurements:
+The program emits one number per line:
 </p>
 
 <pre>
@@ -186,23 +217,32 @@ latency_ns
 </pre>
 
 <p>
-All interpretation happens after the run.
+There are no summaries and no opinions in the output.
 The measurement path is kept as short and transparent as possible.
+</p>
+
+<p>
+Any aggregation or visualization happens after the fact.
 </p>
 
 <hr>
 
-<h2>Current State</h2>
+<h2>Where this goes next</h2>
 
 <p>
-This is the baseline experiment.
-Future work will extend it by changing one variable at a time
-while preserving the existing invariants.
+This page documents the baseline.
 </p>
 
 <p>
-This page will be updated as new tests are added.
+Future work will modify exactly one variable at a time —
+block size, offset patterns, storage media, CPU isolation —
+while preserving the existing structure.
+</p>
+
+<p>
+As the experiment evolves, this page will grow with it.
 </p>
 
 </body>
 </html>
+

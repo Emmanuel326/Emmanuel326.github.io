@@ -2,154 +2,206 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>Bounded Queue with Mutex + Condition Variables</title>
+  <title>A Bounded Queue, Revisited</title>
 </head>
 
 <body>
-  <h1>Bounded Queue with Mutex + Condition Variables</h1>
+  <h1>A Bounded Queue, Revisited</h1>
 
   <p>
-    This note documents the design and reasoning behind a bounded work queue
-    implemented using <code>pthread_mutex_t</code> and
-    <code>pthread_cond_t</code>.
+    Every systems programmer eventually writes a bounded queue.
+    And almost every systems programmer eventually gets one wrong.
   </p>
 
   <p>
-    The goal was not to build the fastest queue possible, but to build one that
-    is <em>easy to reason about</em>, correct under contention, and explicit
-    about its guarantees and limitations.
-  </p>
-
-  <hr>
-
-  <h2>Why revisit this problem?</h2>
-
-  <p>
-    Bounded queues are a solved problem in theory, but they remain a frequent
-    source of subtle bugs in practice: missed wakeups, spurious wakeups,
-    incorrect signaling, data races, and broken invariants under load.
-  </p>
-
-  <p>
-    This implementation was written as an exercise in making the invariants
-    explicit and then verifying that the code enforces them under concurrency.
+    This page is about why I wrote <em>yet another</em> bounded work queue using
+    <code>pthread_mutex_t</code> and <code>pthread_cond_t</code> — even though
+    this problem has been “solved” for decades.
   </p>
 
   <hr>
 
-  <h2>Core invariants</h2>
+  <h2>The problem that never quite goes away</h2>
 
   <p>
-    The implementation is structured around a small set of invariants that must
-    hold at all times:
+    On paper, bounded queues are simple: a fixed-size buffer, producers,
+    consumers, and some blocking when things fill up or run dry.
+  </p>
+
+  <p>
+    In practice, they are a graveyard of subtle bugs:
+    missed wakeups, incorrect signaling, spurious wakeups,
+    broken invariants under load, and code that works perfectly…
+    until it doesn’t.
+  </p>
+
+  <p>
+    I’ve seen these bugs show up in thread pools, logging systems,
+    job schedulers, and “temporary” utilities that somehow made it into
+    production.
+  </p>
+
+  <p>
+    This implementation started as a personal reset:
+    <strong>what does the simplest correct solution actually look like,
+    if we care more about reasoning than raw speed?</strong>
+  </p>
+
+  <hr>
+
+  <h2>Design goal: boring correctness</h2>
+
+  <p>
+    The goal here was intentionally unambitious:
+  </p>
+
+  <ul>
+    <li>Make the invariants obvious</li>
+    <li>Make state transitions easy to reason about</li>
+    <li>Make failure modes hard to introduce accidentally</li>
+  </ul>
+
+  <p>
+    If this queue ever misbehaves, it should be easy to explain <em>why</em>.
+    If it’s slow, at least it’s slow in a predictable way.
+  </p>
+
+  <hr>
+
+  <h2>The invariants that matter</h2>
+
+  <p>
+    Rather than starting with code, I started with a short list of invariants.
+    Everything else exists only to preserve these under concurrency:
   </p>
 
   <ul>
     <li><code>0 &lt;= size &lt;= capacity</code></li>
-    <li><code>head</code> and <code>tail</code> remain within bounds</li>
-    <li>enqueue blocks iff the queue is full</li>
-    <li>dequeue blocks iff the queue is empty</li>
-    <li>items are dequeued in FIFO order</li>
-    <li>no item is lost or duplicated</li>
+    <li><code>head</code> and <code>tail</code> stay within bounds</li>
+    <li>enqueue blocks <em>only</em> when the queue is full</li>
+    <li>dequeue blocks <em>only</em> when the queue is empty</li>
+    <li>FIFO order is preserved</li>
+    <li>No item is lost or duplicated</li>
   </ul>
 
   <p>
-    All design decisions follow directly from preserving these invariants under
-    concurrent access.
+    If any of these are violated, the queue is broken —
+    no amount of performance can save it.
   </p>
 
   <hr>
 
-  <h2>Mechanism</h2>
+  <h2>One lock, one story</h2>
 
   <p>
-    A single mutex protects all shared queue state. This avoids the complexity
-    of fine-grained locking and makes it possible to reason about state
-    transitions atomically.
+    The entire queue state is protected by a single mutex.
+    This is a deliberate choice.
   </p>
 
   <p>
-    Two condition variables are used:
+    Fine-grained locking can reduce contention,
+    but it also multiplies the number of states your brain has to simulate.
+    For this exercise, I wanted <em>one lock</em> and
+    <em>one place</em> where the truth lives.
+  </p>
+
+  <p>
+    Two condition variables complete the picture:
   </p>
 
   <ul>
-    <li><code>not_full</code> — producers wait while the queue is full</li>
-    <li><code>not_empty</code> — consumers wait while the queue is empty</li>
+    <li><code>not_full</code> — producers sleep when the buffer is full</li>
+    <li><code>not_empty</code> — consumers sleep when the buffer is empty</li>
   </ul>
 
   <p>
-    All waits are performed in <code>while</code> loops rather than
-    <code>if</code> statements. This handles spurious wakeups and ensures that
-    the invariants are re-checked after every wakeup.
+    All waits use <code>while</code>, never <code>if</code>.
+    This isn’t defensive paranoia — it’s required to handle spurious wakeups
+    and racing producers or consumers.
   </p>
 
   <hr>
 
-  <h2>Memory visibility</h2>
+  <h2>Visibility is part of correctness</h2>
 
   <p>
-    Correctness is not just about mutual exclusion but also about visibility.
-    The mutex and condition variable synchronization establish a happens-before
+    Correctness isn’t just about mutual exclusion.
+    It’s also about memory visibility.
+  </p>
+
+  <p>
+    The mutex and condition variable operations establish a happens-before
     relationship between producers and consumers.
+    Anything a producer writes before enqueue is guaranteed to be visible
+    to a consumer after dequeue.
   </p>
 
   <p>
-    Any memory written by a producer before enqueue is guaranteed to be visible
-    to the consumer after dequeue.
+    This guarantee is easy to take for granted — and easy to break
+    if synchronization is misused.
   </p>
 
   <hr>
 
-  <h2>Failure modes avoided</h2>
+  <h2>What this code refuses to do</h2>
 
   <p>
-    This design deliberately avoids several common pitfalls:
+    This design deliberately avoids a few common “optimizations”:
   </p>
 
   <ul>
-    <li>Signaling without holding the mutex</li>
-    <li>Using <code>if</code> instead of <code>while</code> around waits</li>
-    <li>Multiple locks protecting related state</li>
-    <li>Busy waiting under contention</li>
+    <li>No signaling outside the mutex</li>
+    <li>No <code>if</code>-based waits</li>
+    <li>No multiple locks guarding related state</li>
+    <li>No busy waiting under contention</li>
   </ul>
 
   <p>
-    The result is not the lowest-latency queue, but one whose behavior remains
-    predictable under load.
+    The result is not the fastest queue you can build.
+    It is, however, a queue whose behavior you can predict
+    when things get ugly.
   </p>
 
   <hr>
 
-  <h2>Testing & verification</h2>
+  <h2>How I tried to break it</h2>
 
   <p>
-    The implementation was validated using:
+    I don’t believe in “it looks correct”.
+    This implementation was exercised with:
   </p>
 
   <ul>
-    <li>Single-threaded functional tests</li>
-    <li>High-contention stress tests (multiple producers and consumers)</li>
-    <li>Dynamic analysis with ASan, UBSan, and TSan</li>
+    <li>Single-threaded sanity tests</li>
+    <li>High-contention stress tests with many producers and consumers</li>
+    <li>Dynamic analysis using ASan, UBSan, and TSan</li>
   </ul>
 
   <p>
-    The goal of testing was not to prove correctness, but to increase confidence
-    that the stated invariants hold in practice.
+    None of this proves correctness.
+    It simply increases confidence that the invariants
+    survive contact with reality.
   </p>
 
   <hr>
 
-  <h2>What this is (and is not)</h2>
+  <h2>What this is (and what it isn’t)</h2>
 
   <p>
-    This queue is intended as a correct baseline and a reference point.
-    It is not lock-free, not wait-free, and not optimized for extreme
-    throughput.
+    This queue is a baseline.
+    Something to measure more complex designs against.
   </p>
 
   <p>
-    More complex designs should be evaluated against a baseline like this one,
-    with clearly stated tradeoffs.
+    It is not lock-free.
+    It is not wait-free.
+    It is not meant to win benchmarks.
+  </p>
+
+  <p>
+    But if you’re building something faster,
+    you should be able to explain exactly
+    which guarantees you’re trading away — and why.
   </p>
 
   <hr>

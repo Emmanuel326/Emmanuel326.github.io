@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Measuring pread() Latency and Page Cache Effects</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+</head>
+<body>
+
+<h1>Measuring <code>pread()</code> Latency and Page Cache Effects</h1>
+
+<p>
+This post documents a small, controlled systems experiment.
+The goal is to measure one thing, under explicit conditions,
+and understand exactly what is being observed.
+</p>
+
+<p>
+The code for this experiment lives here:
+</p>
+
+<p>
+<a href="https://github.com/Emmanuel326/syslat">
+https://github.com/Emmanuel326/syslat
+</a>
+</p>
+
+<hr>
+
+<h2>Motivation</h2>
+
+<p>
+Performance discussions often mix syscall overhead, page faults,
+storage latency, filesystem behavior, and scheduler effects into a
+single number.
+</p>
+
+<p>
+Once mixed, it becomes difficult to reason about cause.
+</p>
+
+<p>
+This experiment asks a deliberately narrow question:
+</p>
+
+<blockquote>
+<p>
+How long does a single <code>pread()</code> system call take, and how does
+page cache state affect it?
+</p>
+</blockquote>
+
+<p>
+Not throughput. Not benchmarks. Just that.
+</p>
+
+<hr>
+
+<h2>What Is Being Measured</h2>
+
+<p>
+Each measurement is the elapsed time of one <code>pread()</code> system call,
+measured from userspace entry to userspace return.
+</p>
+
+<p>
+Each iteration records one value in nanoseconds:
+</p>
+
+<ul>
+  <li>enter the kernel</li>
+  <li>execute <code>pread()</code></li>
+  <li>return to userspace</li>
+  <li>record elapsed time</li>
+</ul>
+
+<p>
+There is no averaging, no warmup logic, and no filtering.
+</p>
+
+<hr>
+
+<h2>Experimental Shape</h2>
+
+<h3>Binary</h3>
+
+<ul>
+  <li>Single executable</li>
+  <li>Single source file</li>
+  <li>Single thread</li>
+  <li>No libraries or frameworks</li>
+</ul>
+
+<p>
+If it does not fit in one file, the experiment is not understood yet.
+</p>
+
+<h3>Execution Model</h3>
+
+<ul>
+  <li>One process</li>
+  <li>CPU affinity pinned externally using <code>taskset</code></li>
+  <li>No CPU migration</li>
+</ul>
+
+<p>
+CPU pinning is treated as environmental control, not program logic.
+</p>
+
+<hr>
+
+<h2>Warm vs Cold Page Cache</h2>
+
+<p>
+Warm and cold cache states are handled outside the program.
+They are initial conditions, not runtime modes.
+</p>
+
+<h3>Cold Run</h3>
+
+<pre>
+sync
+echo 3 | sudo tee /proc/sys/vm/drop_caches
+</pre>
+
+<p>
+This ensures the page cache is empty before execution.
+Early iterations will include page faults and real IO.
+</p>
+
+<h3>Warm Run</h3>
+
+<pre>
+cat testfile &gt; /dev/null
+</pre>
+
+<p>
+This ensures the file is resident in the page cache before measurement.
+</p>
+
+<p>
+The binary itself does not change between runs.
+</p>
+
+<hr>
+
+<h2>Why <code>pread()</code>?</h2>
+
+<p>
+<code>pread()</code> avoids shared file offset state.
+Each iteration reads the same offset and follows the same syscall path.
+</p>
+
+<p>
+This removes <code>lseek()</code> noise and isolates page cache behavior.
+</p>
+
+<hr>
+
+<h2>What This Is Not Measuring</h2>
+
+<ul>
+  <li>Filesystem throughput</li>
+  <li>NVMe performance</li>
+  <li>Scheduler latency</li>
+  <li>Interrupt latency</li>
+  <li>Overall system performance</li>
+</ul>
+
+<p>
+Those are different questions and require different experiments.
+</p>
+
+<hr>
+
+<h2>Output Philosophy</h2>
+
+<p>
+The program emits raw measurements:
+</p>
+
+<pre>
+latency_ns
+latency_ns
+latency_ns
+</pre>
+
+<p>
+All interpretation happens after the run.
+The measurement path is kept as short and transparent as possible.
+</p>
+
+<hr>
+
+<h2>Current State</h2>
+
+<p>
+This is the baseline experiment.
+Future work will extend it by changing one variable at a time
+while preserving the existing invariants.
+</p>
+
+<p>
+This page will be updated as new tests are added.
+</p>
+
+</body>
+</html>

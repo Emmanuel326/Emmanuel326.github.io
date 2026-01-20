@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>What I Learned by Removing All Container Abstractions</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body {
+      max-width: 800px;
+      margin: 40px auto;
+      padding: 0 16px;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.6;
+      color: #111;
+    }
+    h1, h2, h3 {
+      line-height: 1.3;
+    }
+    code, pre {
+      background: #f5f5f5;
+      padding: 2px 6px;
+      border-radius: 4px;
+    }
+    pre {
+      padding: 12px;
+      overflow-x: auto;
+    }
+    blockquote {
+      border-left: 4px solid #ccc;
+      padding-left: 12px;
+      color: #555;
+      margin-left: 0;
+    }
+    a {
+      color: #0055cc;
+      text-decoration: none;
+    }
+    a:hover {
+      text-decoration: underline;
+    }
+  </style>
+</head>
+
+<body>
+
+<h1>What I Learned by Removing All Container Abstractions</h1>
+
+<p><em>— or why I wrote procjail</em></p>
+
+---
+
+<h2>The problem I kept running into</h2>
+
+<p>
+I’ve worked with containers long enough to be comfortable with them.
+Docker, Kubernetes, YAML, dashboards — all of that is familiar.
+</p>
+
+<p>
+And yet, every serious production incident followed the same pattern:
+</p>
+
+<ul>
+  <li>OOM kills that didn’t make sense</li>
+  <li>Processes that ignored SIGTERM</li>
+  <li>Containers that refused to shut down</li>
+  <li>Zombie processes quietly piling up</li>
+</ul>
+
+<p>
+When that happened, the abstractions stopped helping.
+</p>
+
+<p>
+At some point, I had to answer questions like:
+</p>
+
+<ul>
+  <li>What process is actually running?</li>
+  <li>Who is PID 1?</li>
+  <li>What does the kernel think is happening?</li>
+</ul>
+
+<p>
+I realized something uncomfortable:
+</p>
+
+<blockquote>
+I could <strong>use</strong> containers very well, but I could not always
+<strong>explain their failures</strong> without hand-waving.
+</blockquote>
+
+---
+
+<h2>The idea: remove everything</h2>
+
+<p>
+Instead of adding more tooling, I decided to remove it.
+</p>
+
+<p>
+I wanted the smallest possible program that would:
+</p>
+
+<ul>
+  <li>create Linux namespaces explicitly</li>
+  <li>apply cgroup resource limits directly</li>
+  <li>run a process as PID 1</li>
+  <li>forward signals manually</li>
+  <li>do nothing “helpful” behind the scenes</li>
+</ul>
+
+<p>
+That program became <strong>procjail</strong>.
+</p>
+
+<p>
+You can find it here:
+<a href="https://github.com/Emmanuel326/procjail">github.com/Emmanuel326/procjail</a>
+</p>
+
+---
+
+<h2>The uncomfortable truth about containers</h2>
+
+<p>
+Building this forced me to internalize something very simple:
+</p>
+
+<blockquote>
+A container is just a Linux process.
+</blockquote>
+
+<p>
+More precisely:
+</p>
+
+<ul>
+  <li>a process with a modified view of the system (namespaces)</li>
+  <li>a process constrained by kernel-enforced limits (cgroups)</li>
+  <li>often running as PID 1, whether it expects to or not</li>
+</ul>
+
+<p>
+Everything else is tooling layered on top.
+</p>
+
+<p>
+When things break, it is the kernel you are debugging — not Docker.
+</p>
+
+---
+
+<h2>PID 1 is not a normal process</h2>
+
+<p>
+If procjail taught me one thing clearly, it’s this:
+</p>
+
+<blockquote>
+PID 1 has responsibilities that most programs are not written to handle.
+</blockquote>
+
+<p>
+As PID 1:
+</p>
+
+<ul>
+  <li>signal handling semantics change</li>
+  <li>ignored signals stay ignored</li>
+  <li>zombie reaping becomes your job</li>
+  <li>exiting tears down the entire environment</li>
+</ul>
+
+<p>
+Many real-world container bugs are just this fact surfacing late.
+</p>
+
+---
+
+<h2>What surprised me most</h2>
+
+<p>
+What surprised me wasn’t how complex this was.
+</p>
+
+<p>
+It was how <strong>little code</strong> it took to reproduce real production failure modes.
+</p>
+
+<p>
+A few syscalls.
+A few mounts.
+One badly behaved process.
+</p>
+
+<p>
+And suddenly:
+</p>
+
+<ul>
+  <li>SIGTERM doesn’t shut things down</li>
+  <li>children outlive their parents</li>
+  <li>memory limits kill processes abruptly</li>
+</ul>
+
+<p>
+Containers are thin abstractions.
+That’s not a criticism — it’s a warning.
+</p>
+
+---
+
+<h2>Why procjail stops here</h2>
+
+<p>
+I deliberately stopped adding features.
+</p>
+
+<p>
+No networking.
+No image pulling.
+No overlay filesystems.
+</p>
+
+<p>
+Those solve Day-1 problems.
+</p>
+
+<p>
+Procjail exists for Day-2 — when you are staring at a broken system
+and the kernel is the only thing left that tells the truth.
+</p>
+
+---
+
+<h2>Closing thoughts</h2>
+
+<p>
+I’m not suggesting anyone stop using Docker or Kubernetes.
+They are incredibly useful tools.
+</p>
+
+<p>
+But I do think we should stop treating them as magic.
+</p>
+
+<p>
+The kernel is doing the real work.
+When things fail, that’s what you’re debugging — whether you realize it or not.
+</p>
+
+<p>
+Procjail exists to make that impossible to forget.
+</p>
+
+<p>
+— Emmanuel
+</p>
+
+</body>
+</html>
+

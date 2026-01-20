@@ -3,7 +3,7 @@
 I think about computers from the bottom up.
 
 Not because it is fashionable, but because the bottom is where the truth lives.
-Everything above it eventually lies.
+Everything above it eventually abstracted away and i hate bloat.
 
 This page exists to explain *how I look at systems*, not to enumerate what I have built.
 

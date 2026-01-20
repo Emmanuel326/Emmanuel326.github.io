@@ -2,14 +2,21 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>Emmanuel — Systems, perfomance engineering & Concurrency</title>
+  <title>Emmanuel — Systems, performance engineering & Concurrency</title>
 </head>
 
 <body>
   <h1>NYAKUNDI EMMANUEL</h1>
 
   <p>
-    Systems programming,observability ,perfomance, concurrency primitives, and correctness under contention.
+    Systems programming, observability, performance, concurrency primitives,
+    and correctness under contention.
+  </p>
+
+  <p>
+    I like building small things that force me to confront kernel behavior,
+    scheduling, memory, and failure modes directly — without frameworks
+    smoothing over the sharp edges.
   </p>
 
   <hr>
@@ -20,11 +27,33 @@
       <a href="blogs/bounded-queue.html">
         Bounded Work Queue using Mutex + Condition Variables
       </a>
+      <br>
+      <small>
+        A from-scratch implementation to reason about backpressure,
+        spurious wakeups, invariants, and shutdown semantics under contention.
+      </small>
     </li>
+
     <li>
       <a href="blogs/syslat-pread-page-cache.html">
         Measuring <code>pread()</code> Latency and Page Cache Effects
       </a>
+      <br>
+      <small>
+        An experiment-driven write-up on syscall latency, cache warmup,
+        and why naïve benchmarks lie.
+      </small>
+    </li>
+
+    <li>
+      <a href="blogs/procjail-kernel-truth.html">
+        What I Learned by Removing All Container Abstractions
+      </a>
+      <br>
+      <small>
+        A deep dive into PID 1 semantics, signal delivery, orphan reaping,
+        and the parts of “containers” that are really just kernel contracts.
+      </small>
     </li>
   </ul>
 
@@ -34,13 +63,38 @@
   <ul>
     <li>
       <a href="https://github.com/Emmanuel326/mutex_condvar">
-        mutex_condvar — bounded work queue (C, pthreads)
+        mutex_condvar
       </a>
+      <br>
+      <small>
+        A bounded work queue implemented in C using pthread mutexes and
+        condition variables. Built to study invariants, shutdown behavior,
+        and correctness under high contention — not performance tricks.
+      </small>
     </li>
+
     <li>
       <a href="https://github.com/Emmanuel326/syslat">
-        syslat — syscall &amp; page cache latency experiments
+        syslat
       </a>
+      <br>
+      <small>
+        Small programs to measure syscall latency and page cache behavior.
+        Focused on methodology, repeatability, and understanding what the
+        kernel is actually doing.
+      </small>
+    </li>
+
+    <li>
+      <a href="https://github.com/Emmanuel326/procjail">
+        procjail
+      </a>
+      <br>
+      <small>
+        A minimal process jail written in Go. Implements PID namespaces,
+        PID 1 responsibilities, signal forwarding, process groups,
+        graceful shutdown, and reaping — deliberately without container tooling.
+      </small>
     </li>
   </ul>
 

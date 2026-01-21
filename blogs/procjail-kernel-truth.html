@@ -234,6 +234,88 @@ and the kernel is the only thing left that tells the truth.
 
 ---
 
+
+<h2>The moment the kernel pushed back</h2>
+
+<p>
+This stopped being an academic exercise the day I tried to shut my laptop down.
+</p>
+
+<p>
+The system didn’t power off.
+It hung.
+</p>
+
+<p>
+Then the kernel panicked and told me to reboot.
+</p>
+
+<p>
+I ended up forcing the machine off by holding the power button.
+When it came back up, everything looked fine — but I wasn’t.
+</p>
+
+<p>
+Earlier that day, I had been working on <strong>procjail</strong>.
+Creating mount namespaces.
+Mounting <code>/proc</code>.
+Running processes as PID 1.
+Experimenting with cgroups.
+</p>
+
+<p>
+Nothing crashed.
+Nothing failed loudly.
+Everything appeared to work.
+</p>
+
+<p>
+And yet, during shutdown — when the kernel tried to tear the system down cleanly —
+it hit something it couldn’t reconcile.
+</p>
+
+<p>
+That was the uncomfortable moment:
+</p>
+
+<blockquote>
+Did I actually do this?
+</blockquote>
+
+<p>
+I wasn’t debugging a userspace crash.
+I wasn’t chasing a panic caused by load or memory pressure.
+</p>
+
+<p>
+I had violated an assumption the kernel makes about cleanup.
+</p>
+
+<p>
+And it only surfaced at the very end.
+</p>
+
+<blockquote>
+Containers don’t usually fail at startup.
+They fail at teardown.
+</blockquote>
+
+<p>
+A leaked mount.
+A namespace that wasn’t as isolated as I thought.
+A lifecycle I misunderstood.
+</p>
+
+<p>
+The kernel wasn’t being fragile.
+It was being strict.
+</p>
+
+<p>
+That incident permanently changed how I think about containers.
+</p>
+
+
 <h2>Closing thoughts</h2>
 
 <p>

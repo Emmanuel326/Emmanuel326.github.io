@@ -4,7 +4,6 @@
   <meta charset="utf-8">
   <title>False Sharing, Made Obvious</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/npm/asciinema-player@3.7.0/dist/bundle/asciinema-player.css" />
   <style>
     body {
       max-width: 780px;
@@ -67,7 +66,6 @@
       background: #000;
       border-radius: 5px;
       overflow: hidden;
-      padding: 10px;
     }
   </style>
 </head>
@@ -177,7 +175,7 @@ behavior is visible rather than silent.
 </p>
 
 <div class="asciinema-container">
-  <div id="demo"></div>
+  <script src="https://asciinema.org/a/YdOYboLwuGEgR3kj.js" id="asciicast-YdOYboLwuGEgR3kj" async data-speed="1.5" data-theme="monokai"></script>
 </div>
 
 <hr>
@@ -278,16 +276,6 @@ forces the hardware to wait.
 <p>
 This experiment exists to make that distinction obvious.
 </p>
-
-<script src="https://cdn.jsdelivr.net/npm/asciinema-player@3.7.0/dist/bundle/asciinema-player.min.js"></script>
-<script>
-  AsciinemaPlayer.create('https://emmanuel326.github.io/blogs/casts/falsesharing.json', document.getElementById('demo'), {
-    speed: 1.5,
-    theme: 'monokai',
-    cols: 120,
-    rows: 30
-  });
-</script>
 
 </body>
 </html>

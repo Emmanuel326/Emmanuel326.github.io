@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>False Sharing, Made Obvious</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body {
+      max-width: 780px;
+      margin: 48px auto;
+      padding: 0 16px;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.65;
+      color: #111;
+    }
+
+    h1, h2, h3 {
+      line-height: 1.3;
+      margin-top: 2.2em;
+    }
+
+    h1 {
+      margin-top: 0;
+    }
+
+    pre, code {
+      background: #f5f5f5;
+      padding: 2px 4px;
+      border-radius: 3px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.95em;
+    }
+
+    pre {
+      padding: 12px;
+      overflow-x: auto;
+    }
+
+    blockquote {
+      margin: 1.5em 0;
+      padding-left: 1em;
+      border-left: 3px solid #ddd;
+      color: #333;
+    }
+
+    hr {
+      border: none;
+      border-top: 1px solid #eee;
+      margin: 3em 0;
+    }
+
+    table {
+      border-collapse: collapse;
+      margin: 1.5em 0;
+      width: 100%;
+    }
+
+    th, td {
+      text-align: left;
+      padding: 6px 10px;
+      border-bottom: 1px solid #eee;
+    }
+
+    .asciinema {
+      margin: 2.5em 0;
+    }
+  </style>
+</head>
+<body>
+
+<h1>False Sharing, Made Obvious</h1>
+
+<p>
+False sharing is one of those performance problems that everyone has heard of,
+most people can define, and very few have actually <em>seen</em>.
+</p>
+
+<p>
+Sometimes it appears to do nothing at all. Other times it destroys throughput.
+The confusing part is that the code can look nearly identical in both cases.
+</p>
+
+<blockquote>
+Why does false sharing sometimes look harmless — and sometimes catastrophic?
+</blockquote>
+
+<p>
+The short answer is that it depends on whether cache coherence latency ends up on
+the critical path. This post exists to make that distinction concrete.
+</p>
+
+<hr>
+
+<h2>A deliberately small experiment</h2>
+
+<p>
+This is not a realistic workload, and it is not intended to predict application
+performance. It is a controlled experiment designed to isolate a single effect.
+</p>
+
+<p>
+There are four tiny programs, arranged along two independent axes:
+</p>
+
+<ul>
+  <li>Whether two threads share a cache line or not</li>
+  <li>Whether the loop performs a simple store or a read–modify–write</li>
+</ul>
+
+<p>
+Nothing else varies. Thread placement, timing logic, iteration counts, and
+compiler flags are identical across all cases.
+</p>
+
+<hr>
+
+<h2>The first axis: cache-line placement</h2>
+
+<p>
+In the false-sharing cases, two threads update different variables that reside on
+the same cache line. In the padded cases, each thread updates a variable that
+occupies its own cache line.
+</p>
+
+<p>
+This isolates false sharing from true sharing. No data is actually shared.
+Only the cache line is.
+</p>
+
+<hr>
+
+<h2>The second axis: what the CPU is forced to wait for</h2>
+
+<p>
+In the store-only variants, the hot loop is effectively:
+</p>
+
+<pre><code>(*local)++;</code></pre>
+
+<p>
+On modern CPUs this often compiles to a buffered store that can retire without
+waiting for cache coherence traffic. The store is real, but its cost may be hidden.
+</p>
+
+<p>
+In the read–modify–write variants, the loop becomes:
+</p>
+
+<pre><code>uint64_t v = *local;
+v++;
+*local = v;</code></pre>
+
+<p>
+Now the core must obtain exclusive ownership of the cache line, wait for
+invalidations on other cores, and complete the load before the store can retire.
+Coherence latency is no longer optional.
+</p>
+
+<p>
+This difference — whether the CPU is forced to wait — is the entire point of the
+experiment.
+</p>
+
+<hr>
+
+<h2>A live run</h2>
+
+<p>
+The following terminal recording shows the automated benchmark running all four
+variants back to back. Progress output is intentionally included so long-running
+behavior is visible rather than silent.
+</p>
+
+<div class="asciinema">
+  <script src="https://asciinema.org/a/Y8xvhhhF0MhN1aUO.js" async></script>
+</div>
+
+<hr>
+
+<h2>How to read the results</h2>
+
+<p>
+Exact timings are not the important part. They vary by CPU model, frequency
+scaling, thermal state, and background load.
+</p>
+
+<p>
+What matters is the qualitative ordering.
+</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Case</th>
+      <th>Expected behavior</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Store-only, padded</td>
+      <td>Fastest</td>
+    </tr>
+    <tr>
+      <td>Store-only, false sharing</td>
+      <td>Slightly slower</td>
+    </tr>
+    <tr>
+      <td>Read–modify–write, padded</td>
+      <td>Slower</td>
+    </tr>
+    <tr>
+      <td>Read–modify–write, false sharing</td>
+      <td>Much slower</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>
+If false sharing shows little impact in the store-only case, that does not mean it
+is harmless. It means its cost is being hidden by the memory system.
+</p>
+
+<p>
+When the code forces coherence latency onto the critical path, the cost becomes
+impossible to ignore.
+</p>
+
+<hr>
+
+<h2>Why threads are pinned</h2>
+
+<p>
+Thread migration makes cache ownership unstable and introduces noise that obscures
+cause and effect. Each worker thread is pinned to a specific CPU so that cache
+lines have consistent owners and coherence traffic is real rather than incidental.
+</p>
+
+<p>
+This is a teaching benchmark. Stability matters more than realism.
+</p>
+
+<hr>
+
+<h2>Why the benchmark is intentionally boring</h2>
+
+<p>
+Large benchmarks obscure causality. Abstractions pile up. Effects blur together.
+</p>
+
+<p>
+Here, when performance changes, there is only one place to look.
+</p>
+
+<p>
+The goal is not to impress. The goal is to remove excuses.
+</p>
+
+<hr>
+
+<h2>Takeaway</h2>
+
+<p>
+False sharing is not binary. It can exist quietly, hidden behind store buffers and
+out-of-order execution, or it can dominate runtime when coherence latency becomes
+unavoidable.
+</p>
+
+<p>
+Whether you see it depends less on the data layout than on whether your code
+forces the hardware to wait.
+</p>
+
+<p>
+This experiment exists to make that distinction obvious.
+</p>
+
+</body>
+</html>
+

@@ -1,0 +1,207 @@
+<h1 id="nyakundi-emmanuel">NYAKUNDI EMMANUEL</h1>
+<p><strong>Systems &amp; Infrastructure Engineer</strong></p>
+<p>📧 nyariboemmanuel8@gmail.com | 🔗 <a
+href="https://github.com/Emmanuel326">GitHub: Emmanuel326</a> | 🌐 <a
+href="https://emmanuel326.github.io">emmanuel326.github.io</a></p>
+<hr />
+<h2 id="professional-summary">PROFESSIONAL SUMMARY</h2>
+<p>Systems engineer specializing in <strong>Go, Kubernetes, and Linux
+kernel programming</strong>. Active contributor to <strong>GitLab
+Runner</strong> (Page 5 globally, 479 points in 2 weeks) and
+<strong>Kubernetes Gateway API (CNCF)</strong>. Deep expertise in
+container runtimes, concurrency primitives, and performance analysis.
+Proven ability to identify security vulnerabilities, optimize critical
+infrastructure code, and provide maintainer-level technical reviews.
+Strong focus on <strong>cloud-native systems, networking data planes,
+and production reliability</strong>.</p>
+<hr />
+<h2 id="open-source-contributions">OPEN SOURCE CONTRIBUTIONS</h2>
+<h3 id="gitlab-runner-contributor-gitlab-go-kubernetes-docker">GitLab
+Runner Contributor | GitLab (Go, Kubernetes, Docker)</h3>
+<p><em>January 2025 - Present</em></p>
+<ul>
+<li><strong>Ranked Page 5 on global contributor leaderboard</strong>
+within 2 weeks (479 points, 465 from merged code)</li>
+<li><strong>Merged 3 production MRs</strong> fixing critical issues in
+retry infrastructure, context cancellation, and timer lifecycle
+<ul>
+<li>Fixed backoff retry to respect context cancellation, improving
+shutdown responsiveness across Runner codebase</li>
+<li>Eliminated timer leaks in network layer by replacing
+<code>time.After</code> with properly managed timers</li>
+<li>Corrected context error handling in runner wrapper, preventing
+incorrect error propagation</li>
+</ul></li>
+<li><strong>Provided maintainer-level technical reviews</strong> on
+security-critical Kubernetes features
+<ul>
+<li>Identified 7 critical issues in Kubernetes Secrets implementation:
+feature flag bypass, RBAC permission gaps, secret lifecycle bugs,
+resource leaks, and missing test coverage</li>
+<li>Proposed architectural improvements and concrete code fixes adopted
+by maintainers</li>
+</ul></li>
+<li><strong>Approved as Community Contributor</strong> by GitLab
+engineering leadership after demonstrating deep K8s executor
+knowledge</li>
+<li><strong>Reduced maintainer review burden</strong> by triaging
+complex Docker/Kubernetes MRs with detailed technical analysis</li>
+</ul>
+<p><strong>Technical Impact</strong>: Reviews prevent security
+vulnerabilities from reaching production; merged fixes improve
+reliability for millions of CI/CD pipelines.</p>
+<p><strong>Links</strong>: <a
+href="https://gitlab.com/gitlab-org/gitlab-runner/-/merge_requests/6061">MR
+#6061</a> | <a
+href="https://gitlab.com/gitlab-org/gitlab-runner/-/merge_requests/6063">MR
+#6063</a> | <a
+href="https://gitlab.com/gitlab-org/gitlab-runner/-/merge_requests/6064">MR
+#6064</a> | <a
+href="https://gitlab.com/gitlab-org/gitlab-runner/-/merge_requests/6354#note_3059701426">Security
+Review</a></p>
+<h3
+id="kubernetes-gateway-api-contributor-cncf-go-kubernetes">Kubernetes
+Gateway API Contributor | CNCF (Go, Kubernetes)</h3>
+<p><em>February 2025</em></p>
+<ul>
+<li><strong>Security Enhancement</strong>: Added length validation (253
+chars) to controller name validation, preventing ReDoS attacks</li>
+<li><strong>Test Coverage</strong>: Achieved 100% coverage with 20
+comprehensive test cases per API version (v1, v1beta1)</li>
+<li><strong>Standards Alignment</strong>: Ensured validation adheres to
+Kubernetes DNS subdomain limits and best practices</li>
+<li><strong>Applied to both API versions</strong>: Consistent validation
+across v1 and v1beta1 with benchmark tests</li>
+</ul>
+<p><strong>Link</strong>: <a
+href="https://github.com/kubernetes-sigs/gateway-api/pull/4514">PR
+#4514</a></p>
+<hr />
+<h2 id="technical-skills">TECHNICAL SKILLS</h2>
+<p><strong>Languages</strong>: Go (production-level), C, Rust, Python,
+Shell Scripting<br />
+<strong>Cloud Native</strong>: Kubernetes (RBAC, Secrets, Pod lifecycle,
+Operators), Docker, GitLab CI/CD, Container Runtimes<br />
+<strong>Networking &amp; Kernel</strong>: eBPF/XDP, Linux Kernel
+Programming, Packet Processing, Network Data Planes<br />
+<strong>Systems</strong>: PID Namespaces, Signal Handling, Page Cache,
+Syscall Analysis, Memory Management, Process Lifecycle<br />
+<strong>Concurrency</strong>: Goroutines/Channels, Pthread Primitives,
+Lock-Free Algorithms, Backpressure Design, Context Propagation<br />
+<strong>Tools</strong>: Git, GDB, pprof, strace, perf, Observability
+Tooling (Prometheus patterns)<br />
+<strong>Distributed Systems</strong>: Graceful shutdown, Error handling
+patterns, Feature flags, Production debugging</p>
+<hr />
+<h2 id="technical-projects">TECHNICAL PROJECTS</h2>
+<h3 id="procjail-minimal-process-isolation-in-go">Procjail | Minimal
+Process Isolation in Go</h3>
+<p><em>Go, Linux Kernel, Namespaces</em></p>
+<ul>
+<li>Built process jail implementing <strong>PID namespace
+semantics</strong> and kernel contracts without high-level runtime
+abstractions</li>
+<li>Managed <strong>PID 1 responsibilities</strong>: signal forwarding,
+process group management, orphan reaping, zombie prevention</li>
+<li>Engineered production-grade graceful shutdown with proper signal
+delivery and context cancellation</li>
+<li><strong>Applied learnings directly to GitLab Runner
+contributions</strong>: Deep understanding of container internals
+enabled high-quality reviews and bug identification in production CI/CD
+infrastructure</li>
+</ul>
+<p><strong>Link</strong>: <a
+href="https://github.com/Emmanuel326/procjail">github.com/Emmanuel326/procjail</a></p>
+<h3 id="syslat-system-latency-analysis-suite">Syslat | System Latency
+Analysis Suite</h3>
+<p><em>C, Go, Linux Kernel</em></p>
+<ul>
+<li>Designed microbenchmarking suite measuring <strong>syscall latency
+and page cache behavior</strong> for <code>pread()</code></li>
+<li>Conducted experiment-driven analysis exposing why naive benchmarks
+provide misleading performance data</li>
+<li>Quantified kernel-level latency vs measurement noise in production
+Linux environments</li>
+<li>Applied findings to optimize I/O patterns in distributed
+systems</li>
+</ul>
+<p><strong>Link</strong>: <a
+href="https://github.com/Emmanuel326/syslat">github.com/Emmanuel326/syslat</a></p>
+<h3
+id="mutex-condition-variable-work-queue-concurrency-primitives">Mutex
+&amp; Condition Variable Work Queue | Concurrency Primitives</h3>
+<p><em>C, Pthreads</em></p>
+<ul>
+<li>Implemented bounded work queue from scratch using <strong>pthread
+mutexes and condition variables</strong></li>
+<li>Optimized for correctness under high contention: spurious wakeups,
+shutdown semantics, invariant maintenance</li>
+<li>Achieved thread-safe backpressure management validated through
+stress testing</li>
+<li><strong>Applied patterns to Go concurrency</strong>: Context-aware
+cancellation and graceful shutdown in GitLab contributions</li>
+</ul>
+<p><strong>Link</strong>: <a
+href="https://github.com/Emmanuel326/mutex_condvar">github.com/Emmanuel326/mutex_condvar</a></p>
+<h3 id="false-sharing-analysis-cpu-cache-behavior">False Sharing
+Analysis | CPU Cache Behavior</h3>
+<p><em>C, Performance Analysis</em></p>
+<ul>
+<li>Designed 2×2 microbenchmark matrix demonstrating <strong>cache-line
+sharing impact</strong> on execution time</li>
+<li>Quantified performance degradation (up to 10x slowdown) from cache
+coherence latency</li>
+<li>Controlled experiments isolating when false sharing is hidden
+vs. when it dominates performance</li>
+<li>Applied learnings to optimize multi-threaded Go code</li>
+</ul>
+<p><strong>Link</strong>: <a
+href="https://github.com/Emmanuel326/false-sharing">github.com/Emmanuel326/false-sharing</a></p>
+<hr />
+<h2 id="technical-writing">TECHNICAL WRITING</h2>
+<p><strong>Published Research &amp; Analysis</strong> (<a
+href="https://emmanuel326.github.io">emmanuel326.github.io</a>)</p>
+<ul>
+<li><strong>“What I Learned by Removing All Container
+Abstractions”</strong> - Deep dive into PID 1 semantics, signal
+delivery, and kernel contracts. Documents production-level container
+failure modes.</li>
+<li><strong>“Measuring pread() Latency and Page Cache Effects”</strong>
+- Methodology for syscall benchmarking and understanding kernel behavior
+vs measurement artifacts.</li>
+<li><strong>“False Sharing, Made Obvious”</strong> - Controlled
+experiments demonstrating when cache coherence latency impacts
+performance.</li>
+<li><strong>“Bounded Work Queue using Mutex + Condition
+Variables”</strong> - Implementation guide covering backpressure,
+spurious wakeups, and shutdown correctness.</li>
+</ul>
+<hr />
+<h2 id="education">EDUCATION</h2>
+<p><strong>Kenyatta University</strong> | Bachelor of Science,
+Mathematics &amp; Computer Science<br />
+<em>2023 - 2027 (Expected)</em></p>
+<p><strong>Relevant Coursework</strong>: Algorithmic Complexity, Systems
+Architecture, Operating Systems, Computational Logic</p>
+<hr />
+<h2 id="what-im-looking-for">WHAT I’M LOOKING FOR</h2>
+<p>Remote <strong>Backend/Infrastructure Engineer</strong> role (intern,
+junior, or mid-level) working on:</p>
+<ul>
+<li><strong>Kubernetes-native infrastructure</strong> (operators,
+controllers, cluster tooling)</li>
+<li><strong>CI/CD &amp; Developer Tooling</strong> (build systems,
+containerization, pipeline optimization)</li>
+<li><strong>Observability platforms</strong> (eBPF-based monitoring,
+distributed tracing, metrics systems)</li>
+<li><strong>High-performance systems</strong> (data planes, packet
+processing, service mesh, networking)</li>
+</ul>
+<p>Strong preference for <strong>remote-first teams</strong> building
+cloud-native infrastructure with mentorship opportunities. Open to
+companies in observability (Grafana, Datadog), infrastructure
+(HashiCorp, Cloudflare), CI/CD (GitLab, CircleCI, Buildkite), or CNCF
+projects.</p>
+<hr />
+<p><strong>Available immediately for remote work. Timezone: EAT (UTC+3)
+- flexible for EU/US overlap.</strong></p>

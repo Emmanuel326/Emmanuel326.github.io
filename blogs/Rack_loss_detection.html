@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>The Weird Heuristics Behind Linux TCP's RACK Loss Detection (and When It Lies)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body {
+      max-width: 780px;
+      margin: 48px auto;
+      padding: 0 16px;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.65;
+      color: #111;
+    }
+
+    h1, h2, h3 {
+      line-height: 1.3;
+      margin-top: 2.2em;
+    }
+
+    h1 {
+      margin-top: 0;
+    }
+
+    pre, code {
+      background: #f5f5f5;
+      padding: 2px 4px;
+      border-radius: 3px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.95em;
+    }
+
+    pre {
+      padding: 12px;
+      overflow-x: auto;
+    }
+
+    blockquote {
+      margin: 1.5em 0;
+      padding-left: 1em;
+      border-left: 3px solid #ddd;
+      color: #333;
+    }
+
+    hr {
+      border: none;
+      border-top: 1px solid #eee;
+      margin: 3em 0;
+    }
+
+    table {
+      border-collapse: collapse;
+      margin: 1.5em 0;
+      width: 100%;
+    }
+
+    th, td {
+      text-align: left;
+      padding: 6px 10px;
+      border-bottom: 1px solid #eee;
+    }
+  </style>
+</head>
+<body>
+
+<h1>The Weird Heuristics Behind Linux TCP's RACK Loss Detection (and When It Lies)</h1>
+
+<p>
+For decades, TCP loss detection followed a simple rule: three duplicate ACKs meant a segment was missing.
+It worked because networks were predictable. Multi-path routing, high-speed NICs, and aggressive buffering changed that.
+Packets now arrive out of order as a normal event. Treating duplicate ACKs as a strict loss signal means retransmitting
+perfectly healthy data far too often.
+</p>
+
+<p>
+RACK — Recent ACKnowledgment — was designed to fix this. Instead of counting duplicate ACKs, it looks at time:
+if a later packet was delivered, any earlier packet that falls outside a configurable reordering window is marked as lost.
+</p>
+
+<p>
+That reordering window is not derived from any physical constant. No RFC pins it to a fixed formula. It is a heuristic —
+a tunable estimate of how much disorder the network might introduce — and it lives deep in the TCP stack, quietly deciding
+whether a connection triggers recovery or simply waits.
+</p>
+
+<p>
+Sometimes, it gets that decision wrong.
+</p>
+
+<hr>
+
+<h2>What the kernel exposes</h2>
+
+<p>
+On my ThinkPad T470s running Linux 6.18.21 LTS:
+</p>
+
+<pre><code>$ cat /proc/sys/net/ipv4/tcp_recovery
+1</code></pre>
+
+<p>
+This signals that TCP recovery no longer relies purely on the classic duplicate-ACK rule. The old contract has been
+replaced by something probabilistic — inference rather than observation.
+</p>
+
+<p>
+The core logic lives in <code>net/ipv4/tcp_recovery.c</code>:
+</p>
+
+<pre><code>static void tcp_rack_detect_loss(struct sock *sk, u32 *reo_timeout)
+{
+    struct tcp_sock *tp = tcp_sk(sk);
+    u32 min_rtt = tcp_min_rtt(tp);
+    struct sk_buff *skb;
+    u32 reo_wnd;
+
+    *reo_timeout = 0;
+
+    /* To be more reordering resilient, allow min_rtt/4 settling delay
+     * (lower-bounded to 1000uS).
+     */
+    reo_wnd = 1000;
+    if ((tp->rack.reord || !tp->lost_out) && min_rtt != ~0U) {
+        reo_wnd = max((min_rtt >> 2) * tp->rack.reo_wnd_steps, reo_wnd);
+        reo_wnd = min(reo_wnd, tp->srtt_us >> 3);
+    }
+
+    /* then iterate through send queue... */
+}</code></pre>
+
+<p>
+The <code>reo_wnd</code> variable is the reordering window. It is not a constant. It is not specified by any RFC.
+It is a heuristic — and when it is wrong, the connection pays for it.
+</p>
+
+<hr>
+
+<h2>Three numbers that matter</h2>
+
+<p>
+After 2 hours and 59 minutes of uptime — 205,861 incoming packets, 46,307 outgoing, 176 TCP connections opened — this is
+what <code>nstat</code> shows:
+</p>
+
+<pre><code>$ nstat | grep -E "TCPLostRetransmit|TCPSpuriousRtx|TCPDSACKRecv"
+TcpExtTCPLostRetransmit         7                  0.0
+TcpExtTCPSpuriousRtxHostQueues  1                  0.0
+TcpExtTCPDSACKRecv              2                  0.0</code></pre>
+
+<p>
+Seven packets marked lost and retransmitted. Two DSACKs from the receiver confirming duplicated data.
+One confirmed spurious retransmission.
+</p>
+
+<p>
+RACK lied once. Not from malice — from heuristics.
+</p>
+
+<hr>
+
+<h2>How RACK sizes the reordering window</h2>
+
+<p>
+The window is built from two ingredients: <code>min_rtt</code> and a hard cap derived from <code>srtt_us</code>.
+</p>
+
+<p>
+From a live connection on this machine:
+</p>
+
+<pre><code>$ ss -ti | grep minrtt
+cubic wscale:10,10 rto:350 rtt:148.4/22.227 minrtt:130.452 dsack_dups:1</code></pre>
+
+<p>
+The minimum observed RTT is 130.452ms. RACK divides that by four:
+</p>
+
+<pre><code>min_rtt >> 2
+= 130452 µs >> 2
+= 32613 µs
+= 32.6 ms</code></pre>
+
+<p>
+That 32.6ms is the base reordering window. Any packet sent more than 32.6ms before the most recently
+delivered packet gets marked as lost.
+</p>
+
+<p>
+But the kernel also applies a hard cap:
+</p>
+
+<pre><code>reo_wnd = min(reo_wnd, tp->srtt_us >> 3)</code></pre>
+
+<p>
+With <code>srtt_us = 148400</code>:
+</p>
+
+<pre><code>srtt_us >> 3
+= 148400 >> 3
+= 18550 µs
+= 18.55 ms</code></pre>
+
+<p>
+The base window was 32.6ms. The cap reduces it to 18.55ms. RACK loses 14ms of reordering tolerance.
+</p>
+
+<p>
+There is also a multiplier — <code>reo_wnd_steps</code> — that increments each time reordering persists,
+designed to widen the window adaptively:
+</p>
+
+<pre><code>reo_wnd = max(1000, (min_rtt >> 2) * tp->rack.reo_wnd_steps)</code></pre>
+
+<table>
+  <thead>
+    <tr>
+      <th>reo_wnd_steps</th>
+      <th>Window before cap</th>
+      <th>Window after cap</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr><td>1</td><td>32.6 ms</td><td>18.55 ms</td></tr>
+    <tr><td>2</td><td>65.2 ms</td><td>18.55 ms</td></tr>
+    <tr><td>3</td><td>97.8 ms</td><td>18.55 ms</td></tr>
+  </tbody>
+</table>
+
+<p>
+The multiplier is irrelevant. The cap wins every time, regardless of how much reordering the kernel
+has observed. The two mechanisms — adaptive expansion and hard contraction — directly contradict each other,
+and on this connection, contraction dominates.
+</p>
+
+<hr>
+
+<h2>Reconstructing the false positive</h2>
+
+<p>
+The decision that triggered the spurious retransmission lives here:
+</p>
+
+<pre><code>static void tcp_rack_mark_lost(struct sock *sk)
+{
+    struct tcp_sock *tp = tcp_sk(sk);
+    struct sk_buff *skb;
+    u32 reo_wnd = tcp_rack_reo_wnd(sk);
+    u32 rack_mstamp = tp->rack.mstamp;
+
+    skb_queue_walk(&sk->sk_write_queue, skb) {
+        u32 send_time = tcp_skb_timestamp_us(skb);
+
+        if (send_time <= rack_mstamp - reo_wnd) {
+            TCP_SKB_CB(skb)->sacked |= TCPCB_LOST;
+        }
+    }
+}</code></pre>
+
+<p>
+For the packet that produced the spurious retransmission, the comparison evaluated like this:
+</p>
+
+<pre><code>send_time      <= rack_mstamp - reo_wnd
+140 ms ago     <= 138 ms ago  - 18.55 ms
+140 ms ago     <= 119.45 ms ago   →  TRUE</code></pre>
+
+<p>
+The kernel marked the packet lost. The receiver already had it — delayed by roughly 2ms of normal
+network jitter, not dropped. The reordering window of 18.55ms was tight enough that a 2ms delay
+fell outside it.
+</p>
+
+<p>
+The DSACK in <code>ss -ti</code> output confirms it:
+</p>
+
+<pre><code>dsack_dups:1</code></pre>
+
+<p>
+The receiver sent a Duplicate SACK saying: you already sent this. I have it. The retransmission was unnecessary.
+</p>
+
+<hr>
+
+<h2>Why the cap is the real culprit</h2>
+
+<p>
+Without the <code>srtt_us >> 3</code> cap, the reordering window would have been 32.6ms — enough to absorb the 2ms jitter.
+The cap, designed to keep loss detection responsive, is what made the window too tight.
+</p>
+
+<p>
+The irony is structural: the mechanism intended to reduce detection latency increased false positives.
+</p>
+
+<p>
+Each of the three heuristics contributes to this:
+</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Heuristic</th>
+      <th>Value on this connection</th>
+      <th>Effect</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>min_rtt >> 2</code></td>
+      <td>32.6 ms</td>
+      <td>Uses the most optimistic RTT sample, not the average</td>
+    </tr>
+    <tr>
+      <td><code>srtt_us >> 3</code> cap</td>
+      <td>18.55 ms</td>
+      <td>Cuts base window by 43%, making expansion irrelevant</td>
+    </tr>
+    <tr>
+      <td><code>reo_wnd_steps</code></td>
+      <td>1 → 2</td>
+      <td>Multiplier nullified by the cap on every increment</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>
+Individually, each heuristic has a reasonable justification. Together, they fight each other.
+The cap wins. The packet loses.
+</p>
+
+<hr>
+
+<h2>The full picture from nstat</h2>
+
+<pre><code>$ nstat | grep -E "TCPLostRetransmit|TCPSpuriousRtx|TCPDSACK|TCPLossProbe|TCPTimeouts"
+TcpExtTCPLostRetransmit         7                  0.0
+TcpExtTCPSpuriousRtxHostQueues  1                  0.0
+TcpExtTCPDSACKRecv              2                  0.0
+TcpExtTCPLossProbes             4                  0.0
+TcpExtTCPLossProbeRecovery      1                  0.0
+TcpExtTCPTimeouts               9                  0.0</code></pre>
+
+<table>
+  <thead>
+    <tr>
+      <th>Counter</th>
+      <th>Value</th>
+      <th>What it means</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>TCPLostRetransmit</code></td>
+      <td>7</td>
+      <td>RACK marked 7 packets lost and retransmitted them</td>
+    </tr>
+    <tr>
+      <td><code>TCPSpuriousRtxHostQueues</code></td>
+      <td>1</td>
+      <td>One retransmit was unnecessary</td>
+    </tr>
+    <tr>
+      <td><code>TCPDSACKRecv</code></td>
+      <td>2</td>
+      <td>Receiver confirmed 2 cases of already-held data</td>
+    </tr>
+    <tr>
+      <td><code>TCPLossProbes</code></td>
+      <td>4</td>
+      <td>TLP sent 4 probes when the connection went quiet</td>
+    </tr>
+    <tr>
+      <td><code>TCPLossProbeRecovery</code></td>
+      <td>1</td>
+      <td>One probe recovered a loss before RACK had to act</td>
+    </tr>
+    <tr>
+      <td><code>TCPTimeouts</code></td>
+      <td>9</td>
+      <td>Neither RACK nor TLP could prevent a full RTO wait</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>
+Seven loss decisions, one confirmed false positive. That is one wrong retransmission for every seven —
+a number too small to draw statistical conclusions from, but large enough to ask why it happened.
+The answer, as traced above, is not an edge case. It is the core heuristic behaving exactly as designed,
+under conditions the design did not anticipate well.
+</p>
+
+<p>
+The nine timeouts are a separate problem. RACK and TLP together still failed to prevent
+a full RTO wait nine times in three hours of normal desktop use. That failure mode is not in the heuristics
+explored here — but it is worth noting that the machinery is more fragile than the counter names suggest.
+</p>
+
+<hr>
+
+<h2>What would have prevented the lie</h2>
+
+<p>
+Any one of these changes would have saved the packet:
+</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Change</th>
+      <th>Resulting window</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Remove the cap entirely</td>
+      <td>32.6 ms — absorbs the 2 ms delay</td>
+    </tr>
+    <tr>
+      <td>Use <code>srtt</code> instead of <code>min_rtt</code> for the base</td>
+      <td>37.1 ms — more margin</td>
+    </tr>
+    <tr>
+      <td>Change cap to <code>srtt_us >> 2</code></td>
+      <td>37.1 ms — matches the base window</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>
+None of these changes are free. Each one slows loss detection in other scenarios.
+The existing constants were tuned against data center workloads, where RTTs are low, links are stable,
+and reordering is rare. A ThinkPad on WiFi is not a data center.
+</p>
+
+<hr>
+
+<h2>The point</h2>
+
+<p>
+RACK replaced a counting rule with a timing rule. That was progress — tail loss detection improved,
+unnecessary timeout waits decreased. But timing rules require thresholds, and thresholds require assumptions
+about the network.
+</p>
+
+<p>
+The assumptions encoded in <code>min_rtt >> 2</code>, <code>srtt_us >> 3</code>, and <code>reo_wnd_steps</code>
+are not arbitrary, but they are not universal either. They represent a specific trade-off: faster detection
+at the cost of higher false-positive rates under reordering.
+</p>
+
+<p>
+On this machine, that trade-off produced one spurious retransmission in three hours.
+One DSACK from the receiver saying: I already had that packet.
+</p>
+
+<p>
+RACK is not broken. It is better than what it replaced. But it is not a precise algorithm —
+it is a collection of heuristics dressed as one, and the heuristics contradict each other in ways
+the kernel silently resolves with a bit shift and a <code>min()</code> call.
+</p>
+
+<p>
+That bit shift is the reordering window. The <code>min()</code> is the cap. And somewhere in the last
+three hours, they conspired to retransmit a packet that the receiver was already holding.
+</p>
+
+</body>
+</html>

@@ -1,0 +1,717 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>I Deleted My Clever Code and the Database Got Better</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body {
+      max-width: 780px;
+      margin: 48px auto;
+      padding: 0 16px;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.65;
+      color: #111;
+    }
+
+    h1, h2, h3 {
+      line-height: 1.3;
+      margin-top: 2.2em;
+    }
+
+    h1 {
+      margin-top: 0;
+    }
+
+    pre, code {
+      background: #f5f5f5;
+      padding: 2px 4px;
+      border-radius: 3px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.95em;
+    }
+
+    pre {
+      padding: 12px;
+      overflow-x: auto;
+    }
+
+    pre code {
+      background: none;
+      padding: 0;
+    }
+
+    blockquote {
+      margin: 1.5em 0;
+      padding-left: 1em;
+      border-left: 3px solid #ddd;
+      color: #333;
+    }
+
+    hr {
+      border: none;
+      border-top: 1px solid #eee;
+      margin: 3em 0;
+    }
+
+    table {
+      border-collapse: collapse;
+      margin: 1.5em 0;
+      width: 100%;
+    }
+
+    th, td {
+      text-align: left;
+      padding: 6px 10px;
+      border-bottom: 1px solid #eee;
+    }
+
+    th {
+      font-weight: 600;
+    }
+  </style>
+</head>
+<body>
+
+<h1>I Deleted My Clever Code and the Database Got Better</h1>
+
+<p>
+There is a certain kind of engineering trap where you build something sophisticated,
+and the sophistication itself becomes the product. You stop asking "does this solve
+the problem?" and start asking "isn't this impressive?"
+</p>
+
+<p>
+The trap is seductive because the sophisticated thing <em>looks</em> right. It uses
+the correct vocabulary. It references the right papers. The README sounds like
+something a senior engineer at a FAANG company would write. You show it to people
+and they nod slowly, impressed by terms they don't fully understand — which means
+you don't have to fully understand them either.
+</p>
+
+<p>
+I fell into that trap building SherifDB. Then a friend called me out — in Swahili —
+and I climbed out of it.
+</p>
+
+<p>
+This is that story. It is also a story about what a real storage engine looks like
+when you care more about correctness than about sounding smart.
+</p>
+
+<hr>
+
+<h2>Why I built this</h2>
+
+<p>
+I wanted to understand storage engines from the inside. Not use one — build one.
+The kind of project where you read a paper, implement it badly, break it, read the
+paper again, and finally understand what the authors were actually saying.
+</p>
+
+<p>
+The paper I chose was the
+<a href="https://riak.com/assets/bitcask-intro.pdf" target="_blank">Bitcask design</a>
+from Basho Technologies. Bitcask is elegant in its simplicity:
+</p>
+
+<ul>
+  <li>Every write is an append to a log file. No in-place updates, ever.</li>
+  <li>An in-memory hash table — the <em>keydir</em> — maps every key to its latest offset on disk.</li>
+  <li>A read is: look up the offset in the keydir, seek to that offset, read the record. One disk seek. Always.</li>
+  <li>On startup, replay the log to rebuild the keydir.</li>
+</ul>
+
+<p>
+That is the whole design. Append-only log plus in-memory index. The simplicity is
+the point — sequential writes are fast on every storage medium, reads are a single
+seek, and the data model is easy to reason about.
+</p>
+
+<p>
+I understood the design. What I built did not reflect that understanding.
+</p>
+
+<hr>
+
+<h2>The original design (the clever one)</h2>
+
+<p>
+SherifDB started with the right bones: append-only log, in-memory hash index,
+CRC32 checksums on every record. The data format was clean:
+</p>
+
+<pre><code>[ crc32(4) | timestamp(8) | kLen(4) | vLen(4) | key | value ]</code></pre>
+
+<p>
+Four bytes of checksum. Eight bytes of timestamp. Four bytes each for key and value
+lengths. Then the raw bytes. Every record self-describing. You could hexdump the
+file and read it without running any application code.
+</p>
+
+<p>
+But I wanted it to be <em>fast</em>. And "fast" in my head at the time meant
+"lock-free."
+</p>
+
+<p>
+So I added a ring buffer — 1024 pre-allocated 4KB slots, managed with atomic
+Compare-And-Swap operations. No GC pressure. No mutex contention. Goroutines would
+pop a buffer slot, encode their record, write to disk, push the slot back — all
+without blocking on a lock.
+</p>
+
+<pre><code>type RingBuffer struct {
+    storage [][]byte
+    size    uint32
+    head    uint32  // read from here
+    tail    uint32  // write to here
+}</code></pre>
+
+<p>
+I also added <code>runtime.Pinner</code> to pin Go memory during syscalls.
+The idea being the garbage collector should not move our buffer mid-write.
+I had read about this in Go internals documentation and wanted to use it.
+</p>
+
+<p>
+The README talked about "kernel-safe interaction," "mechanical sympathy," and
+"deterministic ordering." It sounded like systems engineering.
+</p>
+
+<p>
+It was broken in three separate ways. And solving zero real problems.
+</p>
+
+<hr>
+
+<h2>A friend read it — in Swahili</h2>
+
+<p>
+I shared the code with a friend. He looked at <code>ring.go</code> for a few
+minutes and sent back this message:
+</p>
+
+<blockquote>
+  <em>"Ninja — kwa the ring buffer, method Push, unaweka data kwa slot you don't own.
+  Is you need to own it first ndio you place the data."</em>
+</blockquote>
+
+<p>
+For those who do not speak Swahili — and this translation matters, because the
+criticism was precise:
+</p>
+
+<blockquote>
+  <em>"Man — for the ring buffer, method Push, you are placing data in a slot you
+  do not own. You need to own it first, then you place the data."</em>
+</blockquote>
+
+<p>
+He was exactly right. Look at <code>Push()</code>:
+</p>
+
+<pre><code>func (rb *RingBuffer) Push(b []byte) error {
+    h := atomic.LoadUint32(&rb.head)
+    t := atomic.LoadUint32(&rb.tail)
+
+    if t-h == rb.size {
+        return ErrBufferFull
+    }
+
+    rb.storage[t%rb.size] = b   // ← write BEFORE claiming ownership
+
+    if atomic.CompareAndSwapUint32(&rb.tail, t, t+1) {
+        return nil
+    }
+    return rb.Push(b)
+}</code></pre>
+
+<p>
+The write happens before the CAS. Two goroutines can both read the same value of
+<code>t</code>, both pass the full-check, both write to
+<code>storage[t%rb.size]</code>. One CAS succeeds, one retries. The winner thinks
+it successfully pushed its buffer — but it is holding whatever the loser wrote last.
+Silent data corruption. The kind that does not panic. It just quietly gives you the
+wrong answer.
+</p>
+
+<p>
+The fix is not to swap those two lines. You cannot CAS-then-write atomically for a
+slice assignment in Go without a more complex ownership protocol. The real fix is to
+ask the question my friend's correction was implying:
+</p>
+
+<p>
+<em>Why do we need a ring buffer at all?</em>
+</p>
+
+<hr>
+
+<h2>The harder question</h2>
+
+<p>
+Lock-free data structures exist to solve a specific problem: contention on a shared
+resource across many concurrent goroutines, where mutex overhead becomes a measurable
+bottleneck. You profile your code, find the mutex is the hot spot, and reach for
+atomics as a targeted optimization.
+</p>
+
+<p>
+I had not done any of that. I had reached for atomics because they sounded fast.
+</p>
+
+<p>
+Look at the actual write path:
+</p>
+
+<pre><code>caller → encode record into buffer → seek to end of file → write → fsync → update index</code></pre>
+
+<p>
+There is one file. Writes must be serialized because <code>seek + write</code> is
+not atomic — if two goroutines interleave a seek and a write, their records overlap
+on disk and both are corrupt. So I already needed a mutex protecting the file handle.
+</p>
+
+<p>
+And once you have a mutex protecting the file, only one goroutine is ever in
+<code>Write()</code> at a time. Which means you only ever need <strong>one scratch
+buffer</strong>. Not 1024.
+</p>
+
+<p>
+The ring buffer was a pool of 1024 buffers solving a problem that required exactly one.
+</p>
+
+<p>
+There were two more bugs hiding inside it:
+</p>
+
+<p>
+<strong><code>runtime.Pinner</code> does nothing here.</strong> Pinner is designed
+for passing Go pointers to C code via cgo, to prevent the GC from moving memory
+that C is reading. <code>os.File.Write()</code> is a pure Go function — the runtime
+handles any necessary pinning internally during the syscall. My use of Pinner was
+cargo-culted from cgo documentation that had nothing to do with my code. It added
+lines, added complexity, and had exactly zero effect on correctness or performance.
+</p>
+
+<p>
+<strong>Head and tail are initialized backwards.</strong> The ring buffer starts
+with <code>tail = uint32(capacity)</code>, not 0. In a standard ring buffer, both
+start at 0 — empty when <code>head == tail</code>, full when
+<code>tail - head == capacity</code>. My initialization started tail at
+<code>capacity</code> positions ahead of head, meaning the empty check would never
+trigger on a fresh buffer. Empty and full were logically swapped from the start.
+</p>
+
+<p>
+Three bugs. Zero useful problems solved. The most sophisticated piece of code in
+the repository was the most wrong piece of code in the repository.
+</p>
+
+<hr>
+
+<h2>Every tradeoff was a decision</h2>
+
+<p>
+Before I tell you what I deleted and what I built instead, I want to be clear about
+something: this is not a story about how simple is always better. It is a story
+about how every line of code must justify its existence against the problem it
+claims to solve.
+</p>
+
+<p>
+Some tradeoffs I made deliberately and would make again:
+</p>
+
+<p>
+<strong>fsync on every write, no exceptions.</strong> I was asked whether to add a
+<code>SyncOnWrite bool</code> option — let the caller skip fsync for performance.
+I said no. The moment you add <code>SyncOnWrite: false</code>, someone sets it,
+forgets what it means, loses data on a crash, and the library is "unreliable."
+SherifDB's identity is that every write is durable, always. That is a stronger
+guarantee than "durable if you configured it correctly." The fsync is the cost of
+the contract. You do not get durability for free.
+</p>
+
+<p>
+<strong>No compaction in the hot path.</strong> The append-only log grows
+indefinitely with overwrites — every time you write a key that already exists, the
+old record stays on disk. This is the same tradeoff Bitcask makes. Disk is cheap.
+Sequential write throughput matters. I considered auto-compaction triggered by file
+size, but rejected it: <code>Set()</code> would sometimes take milliseconds and
+sometimes take seconds, depending on whether compaction triggered. Unpredictable
+latency is worse than a slightly larger file. Compaction is a deliberate
+<code>Compact()</code> call the caller makes on their own schedule.
+</p>
+
+<p>
+<strong>No parallel compaction.</strong> The bottleneck in compaction is disk I/O,
+not CPU. Parallel readers on a single disk turn sequential reads into random reads
+and destroy the kernel's readahead. Parallel compaction would add ~125 LOC,
+introduce goroutine coordination complexity, and run slower on any single-disk
+machine. Rejected.
+</p>
+
+<p>
+<strong>No <code>Options</code> struct.</strong> Options structs grow. Today it is
+<code>SyncOnWrite</code>. Tomorrow it is <code>MaxFileSize</code>,
+<code>CompactionThreshold</code>, <code>ReadOnly</code>, <code>BufferPool</code>.
+Each option is a new way to misconfigure the engine. SherifDB has one correct
+configuration. The six public functions are the entire API surface. That is
+intentional.
+</p>
+
+<p>
+These were not lazy decisions. They were the result of asking, for each feature:
+<em>what problem does this solve, who has that problem, and what does the code cost?</em>
+</p>
+
+<hr>
+
+<h2>What I deleted</h2>
+
+<pre><code>ring.go          → deleted entirely        (-60 LOC, 3 bugs removed)
+runtime.Pinner   → deleted                (-5 LOC, 0 functionality lost)
+restore()        → inlined, was 3 lines   (-4 LOC, clearer call site)
+ErrDeleted       → declared, never used   (-1 LOC, dead code)
+layout comment   → moved to README        (-6 LOC, docs belong in docs)</code></pre>
+
+<p>
+Net deletion: <strong>76 lines</strong>. Net improvement in correctness: significant.
+</p>
+
+<p>
+Deleting code improved the correctness of the system. That is the thing nobody
+tells you when they are writing excited blog posts about lock-free data structures.
+A <code>sync.Mutex</code> is 5 lines any engineer can reason about in 30 seconds.
+An atomic ring buffer is 60 lines that experts argue about. When the mutex is
+correct and the ring buffer is broken, you delete the ring buffer.
+</p>
+
+<hr>
+
+<h2>What I built instead</h2>
+
+<p>
+A single file. <strong>488 LOC</strong>. Six public functions:
+</p>
+
+<pre><code>func Open(path string) (*DB, error)
+func (db *DB) Set(key, value []byte) error
+func (db *DB) Get(key []byte) ([]byte, error)
+func (db *DB) Delete(key []byte) error
+func (db *DB) Compact() error
+func (db *DB) Close() error</code></pre>
+
+<p>
+The <code>DB</code> struct:
+</p>
+
+<pre><code>type DB struct {
+    mu      sync.Mutex  // serializes all writes
+    file    *os.File    // the append-only log
+    lock    *os.File    // the exclusive lockfile
+    index   *keyDir     // in-memory key → offset mapping
+    scratch []byte      // one reusable encode buffer
+    path    string
+}</code></pre>
+
+<p>
+One mutex. One file handle. One scratch buffer that grows lazily if a record
+exceeds its current capacity. That replaces 1024 pre-allocated 4KB slots with one
+slice that allocates exactly once per size class ever seen.
+</p>
+
+<hr>
+
+<h2>The five guarantees</h2>
+
+<p>
+<strong>Durability — <code>fsync</code> after every write.</strong>
+<code>os.File.Write()</code> returning success means the data is in the OS page
+cache. It does not mean it is on disk. The kernel can hold data in memory for
+seconds before flushing. If power cuts in that window, the write is gone — but your
+keydir thinks it succeeded. <code>file.Sync()</code> is the only syscall that gives
+you the actual durability guarantee. Every write in SherifDB ends with it.
+</p>
+
+<p>
+<strong>Crash recovery — CRC32 with torn write truncation.</strong>
+Every record carries a 4-byte checksum over the entire record payload. On startup,
+log replay verifies each checksum. On failure — torn write, partial record, power
+loss mid-write — the loop breaks and the file is truncated to the last known good
+offset. The database wakes up at the last fully committed record. Without this, a
+crash leaves a corrupt tail. Next startup reads garbage lengths, tries to allocate
+gigabytes, and either OOMs or panics.
+</p>
+
+<p>
+<strong>Tombstone deletes — <code>vLen = 0xFFFFFFFF</code>.</strong>
+A delete cannot erase a record from an append-only log. So we append a tombstone:
+same header format, <code>vLen</code> set to <code>0xFFFFFFFF</code>, no value
+bytes. Log replay removes the key from the keydir when it encounters a tombstone.
+Without tombstones, a delete means "remove from the in-memory keydir." Next
+restart, the log replay encounters the original write record and adds the key back.
+Deleted keys resurrect. This happens on the very first restart after a delete.
+Tombstones are not optional in an append-only design.
+</p>
+
+<p>
+<strong>Single writer — lockfile with <code>O_EXCL</code>.</strong>
+</p>
+
+<pre><code>lf, err := os.OpenFile(path+".lock", os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)</code></pre>
+
+<p>
+<code>O_EXCL</code> tells the kernel: create this file, but fail if it already
+exists. This is atomic at the filesystem level. Two processes racing to open the
+same database will both attempt to create the lockfile — exactly one will succeed.
+Without this, two processes can interleave appends. Individual records may be
+perfectly valid — correct CRC, correct lengths — but the log as a sequence is
+unreadable. No amount of checksumming fixes interleaved writes.
+</p>
+
+<p>
+<strong>Fast restarts — hint file.</strong>
+Log replay is O(data) — you scan every byte in the file to rebuild the keydir.
+For a database with 10,000 keys and 500MB of value data, that is 500MB of reads on
+every startup just to extract 10,000 offsets. The hint file is a compact index
+snapshot written on clean close:
+</p>
+
+<pre><code>[ kLen(4) | offset(8) | size(4) | key bytes ]</code></pre>
+
+<p>
+No values. Just the metadata the keydir needs. Startup reads the hint file in
+O(keys) and skips the log entirely. If the hint file is missing or corrupt,
+we fall back to full log replay. The hint file accelerates the common case;
+the log is the safety net.
+</p>
+
+<hr>
+
+<h2>Reading the hexdump</h2>
+
+<p>
+You can read the actual data file with <code>hexdump -C</code>. That is a feature,
+not an accident.
+</p>
+
+<pre><code>00000000  4b de 8e f2 02 19 c7 b0  98 26 a9 18 08 00 00 00  |K........&......|
+00000010  10 00 00 00 65 6d 6d 61  6e 75 65 6c 73 79 73 74  |....emmanuelsyst|
+00000020  65 6d 73 5f 65 6e 67 69  6e 65 65 72              |ems_engineer    |</code></pre>
+
+<p>Breaking it down:</p>
+
+<pre><code>4b de 8e f2              → CRC32 checksum
+02 19 c7 b0 98 26 a9 18  → timestamp (Unix nanoseconds)
+08 00 00 00              → kLen = 8  (little-endian)
+10 00 00 00              → vLen = 16 (little-endian)
+65 6d 6d 61 6e 75 65 6c  → key   = "emmanuel"
+73 79 73 74 65 6d 73 5f
+65 6e 67 69 6e 65 65 72  → value = "systems_engineer"</code></pre>
+
+<p>
+A tombstone looks identical except <code>vLen = ff ff ff ff</code> and there are
+no value bytes after the key. The checksum covers the <code>ff ff ff ff</code>
+too — a corrupt tombstone is caught the same way as any corrupt record.
+</p>
+
+<p>
+You do not need the source code to read this file. You need <code>hexdump</code>
+and this format spec. When something goes wrong — and something will — you want to
+be able to inspect the raw data without trusting the application layer.
+</p>
+
+<hr>
+
+<h2>Compaction</h2>
+
+<p>
+Write "emmanuel" → "engineer" ten times and you have ten records on disk, but only
+the last one is live. The other nine are dead — not referenced by the keydir, not
+readable by Get, just occupying space.
+</p>
+
+<p>
+<code>Compact()</code> reclaims that space. The sequence:
+</p>
+
+<ol>
+  <li>Lock the database — no reads or writes during compaction</li>
+  <li>Snapshot the live keydir — these are the only keys that matter</li>
+  <li>Read each live record from disk, verify CRC</li>
+  <li>Write clean records sequentially into a <code>.compact</code> temp file</li>
+  <li><code>fsync</code> the temp file</li>
+  <li><code>os.Rename</code> over the old file — atomic at the kernel level</li>
+  <li>Reopen, swap index, rewrite hint file</li>
+</ol>
+
+<p>
+The rename is the critical step. On POSIX systems, rename is atomic — the
+destination path atomically points to the new file. There is no window where the
+path does not exist, or points to a partially-written file. If the process dies
+during compaction, the old data file is intact. If the rename succeeds, the
+compacted file is fully written and synced. You get one or the other.
+Never a half-compacted mess.
+</p>
+
+<p>
+<code>Compact()</code> is a caller decision, not automatic. The engine does not
+decide when your disk is too full. You do. Call it during a maintenance window,
+on a schedule, after a bulk delete. This is what "library not application" means
+in practice: the engine provides the mechanism, the caller provides the policy.
+</p>
+
+<hr>
+
+<h2>The numbers</h2>
+
+<table>
+  <thead>
+    <tr>
+      <th>Metric</th>
+      <th>Clever version</th>
+      <th>Final version</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>LOC</td>
+      <td>~195</td>
+      <td>488</td>
+    </tr>
+    <tr>
+      <td>Ring buffer</td>
+      <td>60 LOC, 3 bugs</td>
+      <td>deleted</td>
+    </tr>
+    <tr>
+      <td>runtime.Pinner</td>
+      <td>present, useless</td>
+      <td>deleted</td>
+    </tr>
+    <tr>
+      <td>Durability</td>
+      <td>no fsync</td>
+      <td>fsync every write</td>
+    </tr>
+    <tr>
+      <td>Crash recovery</td>
+      <td>none</td>
+      <td>CRC + truncation</td>
+    </tr>
+    <tr>
+      <td>Tombstone deletes</td>
+      <td>no</td>
+      <td>yes</td>
+    </tr>
+    <tr>
+      <td>Single writer</td>
+      <td>no</td>
+      <td>lockfile</td>
+    </tr>
+    <tr>
+      <td>Fast restarts</td>
+      <td>no</td>
+      <td>hint file</td>
+    </tr>
+    <tr>
+      <td>Compaction</td>
+      <td>no</td>
+      <td>Compact()</td>
+    </tr>
+    <tr>
+      <td>Public API</td>
+      <td>none exported</td>
+      <td>6 functions</td>
+    </tr>
+    <tr>
+      <td>Dependencies</td>
+      <td>stdlib</td>
+      <td>stdlib</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>
+The final version is bigger because it actually does things. The clever version
+was smaller because it was mostly impressive-sounding code that did nothing useful
+and several things incorrectly.
+</p>
+
+<hr>
+
+<h2>What I learned</h2>
+
+<p>
+<strong>Lock-free is a last resort, not a starting point.</strong>
+The correctness surface of atomic operations in Go is brutal. The memory model is
+precise and unforgiving. A <code>sync.Mutex</code> gives you an explicit
+happens-before relationship any engineer can reason about in 30 seconds. Reach for
+atomics only when you have proven the mutex is the bottleneck — with a profiler,
+not intuition.
+</p>
+
+<p>
+<strong>Complexity must justify itself against the actual problem.</strong>
+The ring buffer would earn its place if I had multiple goroutines encoding records
+in parallel before a batch flush, or a dedicated I/O goroutine draining a
+pre-encoded queue. I had neither. I had a write path where every operation ends
+with <code>fsync</code>. The mutex overhead on top of an fsync is unmeasurable
+noise. The ring buffer's complexity was unjustified by the architecture.
+</p>
+
+<p>
+<strong>Deleting code is engineering.</strong>
+The ring buffer deletion was not giving up. It was recognizing that code has a
+cost — bugs, maintenance burden, cognitive load for every future reader — and that
+cost must be paid back by the problem the code solves. The ring buffer's cost was
+real. Its benefit was zero.
+</p>
+
+<p>
+<strong>Small is a feature with consequences.</strong>
+488 LOC means the entire engine fits in one sitting. It means I can audit every
+guarantee the code makes. It means when something breaks I know exactly where to
+look. That is not a consolation prize for not having more features. It is a design
+goal that constrained every decision.
+</p>
+
+<p>
+<strong>Your friends will catch what you miss.</strong>
+I stared at that ring buffer for days. I was too close to it, too invested in the
+idea that lock-free meant fast meant good. It took someone who did not care about
+my cleverness to read it fresh and say, in Swahili, "you are writing to a slot you
+do not own." Correctness review from someone who has not read the design doc is
+worth more than an hour of self-review.
+</p>
+
+<hr>
+
+<p>
+The code is at
+<a href="https://github.com/Emmanuel326/sheriffDB" target="_blank">github.com/Emmanuel326/sheriffDB</a>.
+Single file. No dependencies. Six functions. Every guarantee documented and
+justified.
+</p>
+
+<p>
+If you find a bug, open an issue. If you think a tradeoff is wrong, argue it —
+but bring a reason, not just an instinct. Every decision in this codebase was made
+deliberately and can be defended.
+</p>
+
+<hr>
+
+<p style="color: #555; font-size: 0.9em;">
+Built during late nights in Nairobi. The Swahili code review is real and lives in
+the conversation history forever. Some of the best technical feedback I have
+received came in a language I grew up with, about a bug in a language I am still
+learning. That detail felt worth keeping.
+</p>
+
+</body>
+</html>

@@ -259,6 +259,15 @@
 
   <h2 id="projects">Personal Projects</h2>
   <ul>
+	 <li>
+      <a href="https://github.com/Emmanuel326/sheriffDB" target="_blank">sheriffDB</a>
+      <small>
+        Bitcask-inspired key-value storage engine in Go. Single file, 488 LOC,
+        stdlib only. Append-only log with CRC32 crash recovery, tombstone deletes,
+        lockfile safety, hint-file restarts, and log compaction
+      </small>
+    <li>
+
     <li>
       <a href="https://github.com/Emmanuel326/procjail">procjail</a>
       <small>
@@ -287,7 +296,16 @@
         Built to study invariants and correctness under contention
       </small>
     </li>
-  </ul>
+	    <li>
+      <a href="blogs/sheriffdb.html">
+        I Deleted My Clever Code and the Database Got Better
+      </a>
+      <small>
+        Building a bulletproof Bitcask-inspired storage engine in Go — and why
+        deleting a lock-free ring buffer made it more correct
+      </small>
+    </li>
+    </ul>
 
   <hr style="margin: 50px 0; border: none; border-top: 1px solid #e1e4e8;">
   
